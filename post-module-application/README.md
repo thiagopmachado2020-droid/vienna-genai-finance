@@ -21,6 +21,8 @@ RSI, MACD, annualized volatility and both weight sets are calculated determinist
 
 API keys are entered at runtime, retained in memory only and never written to localStorage or this repository. Because GitHub Pages is a public client-side application, browser-entered keys should be restricted, disposable demonstration keys where the provider supports that practice.
 
+The live screen requests symbols sequentially and automatically waits and retries after a Twelve Data HTTP 429 response. On lower-credit plans, completing all 15 symbols can therefore take more than one minute.
+
 ## Run locally
 
 ```bash

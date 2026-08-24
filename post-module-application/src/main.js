@@ -6,6 +6,7 @@ const candidates = [
 ['AEE','Expansion 5'],['AEP','Expansion 5'],['AES','Expansion 5'],['ATO','Expansion 5'],['BG','Expansion 5']
 ];
 let state={screen:[],submittedWeights:[],referenceWeights:[],news:[],riskline:null};
+let screening=false;
 
 document.querySelector('#app').innerHTML = `
 <main><h1>Diversified Quality & Defensive Growth</h1>
@@ -36,9 +37,20 @@ function macdHist(arr,fast,slow,signal){let ef=ema(arr,fast),es=ema(arr,slow),m=
 function annVol(arr){let r=[];for(let i=1;i<arr.length;i++)r.push(arr[i]/arr[i-1]-1);let mean=r.reduce((a,b)=>a+b,0)/r.length;let v=r.reduce((a,b)=>a+(b-mean)**2,0)/(r.length-1);return Math.sqrt(v)*Math.sqrt(252)}
 async function twelve(ticker,key){
  let u=`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(ticker)}&interval=1day&outputsize=120&apikey=${encodeURIComponent(key)}`;
- let res=await fetch(u); if(!res.ok)throw new Error(`${ticker}: HTTP ${res.status}`); let j=await res.json();
+ let res=await fetch(u); if(!res.ok){let error=new Error(`${ticker}: HTTP ${res.status}`);error.status=res.status;throw error} let j=await res.json();
  if(j.status==='error'||!j.values)throw new Error(`${ticker}: ${j.message||'no values'}`);
  return j.values.slice().reverse().map(x=>({date:x.datetime,close:+x.close,open:+x.open,high:+x.high,low:+x.low}));
+}
+const sleep=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
+async function twelveWithRateLimitRetry(ticker,key){
+ for(let attempt=0;attempt<3;attempt++){
+   try{return await twelve(ticker,key)}
+   catch(error){
+     if(error.status!==429||attempt===2)throw error;
+     document.getElementById('coverage').textContent=`Twelve Data rate limit reached while loading ${ticker}. Waiting for the next credit window...`;
+     await sleep(65000);
+   }
+ }
 }
 function table(rows,heads,keys){return `<table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="${r.pass===true?'pass':r.pass===false?'fail':''}">${keys.map(k=>`<td>${r[k]??''}</td>`).join('')}</tr>`).join('')}</tbody></table>`}
 async function fetchNews(key,survivors){
@@ -50,16 +62,23 @@ async function fetchRiskline(){
  try{let r=await fetch('https://api.riskline.com/alerts/latest.json'); if(!r.ok)throw new Error(`HTTP ${r.status}`); return await r.json()}catch(e){return {error:e.message}}
 }
 async function runScreen({silentMissingKey=false}={}){
- const key=val('tdKey'); if(!key){alert('Enter Twelve Data API key.');return}
+ if(screening)return;
+ const key=val('tdKey'); if(!key){if(!silentMissingKey)alert('Enter Twelve Data API key.');return}
+ screening=true;
+ const screenButton=document.getElementById('screenBtn');
+ screenButton.disabled=true;
+ screenButton.textContent='Loading live data...';
  const rp=+val('rsiPeriod'),rt=+val('rsiThreshold'),mf=+val('macdFast'),ms=+val('macdSlow'),msg=+val('macdSignal');
  const requested=val('tickers').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
  const group=Object.fromEntries(candidates);
- document.getElementById('coverage').textContent='Screening...'; state.screen=[];
- await Promise.all(requested.map(async t=>{
-   try{let d=await twelve(t,key), closes=d.map(x=>x.close), rv=rsi(closes,rp), mh=macdHist(closes,mf,ms,msg), vol=annVol(closes), pass=rv<rt&&mh>0;
+ document.getElementById('coverage').textContent='Starting controlled live-price screen...'; state.screen=[];
+ for(let index=0;index<requested.length;index++){
+   const t=requested[index];
+   document.getElementById('coverage').textContent=`Loading ${t} (${index+1} of ${requested.length})...`;
+   try{let d=await twelveWithRateLimitRetry(t,key), closes=d.map(x=>x.close), rv=rsi(closes,rp), mh=macdHist(closes,mf,ms,msg), vol=annVol(closes), pass=rv<rt&&mh>0;
      state.screen.push({ticker:t,group:group[t]||'Custom',rsi:rv.toFixed(2),macd_hist:mh.toFixed(4),volatility:(100*vol).toFixed(2)+'%',vol_raw:vol,pass,status:pass?'PASS':'FAIL'});
    }catch(e){state.screen.push({ticker:t,group:group[t]||'Custom',rsi:'-',macd_hist:'-',volatility:'-',pass:false,status:'ERROR: '+e.message})}
- }));
+ }
  state.screen.sort((a,b)=>requested.indexOf(a.ticker)-requested.indexOf(b.ticker));
  const survivors=state.screen.filter(x=>x.pass);
  const equalWeight=survivors.length?100/survivors.length:0;
@@ -80,6 +99,9 @@ async function runScreen({silentMissingKey=false}={}){
  document.getElementById('macroPanel').innerHTML=state.riskline?'<h3>Riskline overlay</h3><p class="small">Macro alerts loaded for human/LLM relevance review. They do not change weights.</p>':'';
  document.getElementById('reviewed').disabled=false; document.getElementById('reviewed').checked=false; document.getElementById('generate').disabled=true;
  document.getElementById('loadStatus').textContent=`Live prices refreshed at ${new Date().toLocaleTimeString()}. The runtime key remains in memory only.`;
+ screening=false;
+ screenButton.disabled=false;
+ screenButton.textContent='Refresh Live Portfolio';
 }
 document.getElementById('screenBtn').onclick=()=>runScreen();
 
