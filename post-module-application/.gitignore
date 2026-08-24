@@ -1,0 +1,7 @@
+.Renviron
+.Rhistory
+.RData
+.Rproj.user/
+node_modules/
+dist/
+.env
