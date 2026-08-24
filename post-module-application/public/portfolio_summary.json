@@ -1,0 +1,15 @@
+{
+  "status": "DEMO REFERENCE -- supplied Post-Module example, not live market output",
+  "reference_date": "2026-08-04",
+  "reference_window": "15-day live Twelve Data screen",
+  "screen_survivors": [
+    {"ticker": "ABNB", "submitted_equal_weight": 0.333333, "reference_inverse_volatility_weight": 0.412},
+    {"ticker": "CEG", "submitted_equal_weight": 0.333333, "reference_inverse_volatility_weight": 0.331},
+    {"ticker": "ADSK", "submitted_equal_weight": 0.333333, "reference_inverse_volatility_weight": 0.257}
+  ],
+  "comparison": null,
+  "submitted_method": "equal weight among screen survivors",
+  "reference_method": "inverse volatility, monitoring comparison only",
+  "concentration_flag": {"triggered": false, "basis": "submitted equal-weight portfolio", "largest_weight": 0.333333},
+  "instructions_for_llm": "DEMO ONLY. Interpret the labeled figures; do not recompute them. Equal weight is the submitted allocation. Inverse volatility is reference-only."
+}
