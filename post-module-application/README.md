@@ -23,6 +23,8 @@ API keys are entered at runtime, retained in memory only and never written to lo
 
 The live screen requests symbols sequentially and automatically waits and retries after a Twelve Data HTTP 429 response. On lower-credit plans, completing all 15 symbols can therefore take more than one minute.
 
+If every live request fails, the SPA automatically switches to a clearly labeled reference-demonstration mode using `portfolio_summary.json`. The fallback reproduces the validated August 4, 2026 example, never presents it as current market data, and passes `data_mode: reference_demo` to the LLM commentary surface. A user can retry live data at any time.
+
 ## Run locally
 
 ```bash

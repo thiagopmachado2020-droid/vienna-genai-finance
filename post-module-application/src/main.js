@@ -5,7 +5,7 @@ const candidates = [
 ['AIG','Core 10'],['ALGN','Core 10'],['CEG','Core 10'],['CL','Core 10'],['COR','Core 10'],
 ['AEE','Expansion 5'],['AEP','Expansion 5'],['AES','Expansion 5'],['ATO','Expansion 5'],['BG','Expansion 5']
 ];
-let state={screen:[],submittedWeights:[],referenceWeights:[],news:[],riskline:null};
+let state={screen:[],submittedWeights:[],referenceWeights:[],news:[],riskline:null,dataMode:'none',referenceDate:null};
 let screening=false;
 
 document.querySelector('#app').innerHTML = `
@@ -24,7 +24,7 @@ document.querySelector('#app').innerHTML = `
 <label>newsdata.io API key (optional)<input id="newsKey" type="password" autocomplete="off"></label>
 </div>
 <label><input id="macro" type="checkbox" style="width:auto"> Include Riskline macro overlay</label>
-<button id="screenBtn">Refresh Live Portfolio</button><p id="loadStatus" class="small">The dashboard initializes on load. Live screening starts automatically as soon as a valid runtime Twelve Data key is available. Keys remain in memory only and are not stored.</p></section>
+<button id="screenBtn">Refresh Live Portfolio</button> <button id="demoBtn" class="secondary">Load Reference Demo</button><p id="loadStatus" class="small">The dashboard initializes on load with a clearly labeled reference demonstration. Live screening starts automatically as soon as a valid runtime Twelve Data key is available. Keys remain in memory only and are not stored.</p></section>
 <section class="card"><h2>Human Review Surface</h2><div id="coverage">Run the screen first.</div><div id="screen"></div><div id="weights"></div><div id="news"></div><div id="macroPanel"></div>
 <label><input id="reviewed" type="checkbox" style="width:auto" disabled> I have reviewed the surface</label>
 <button id="generate" disabled>Generate Research Note</button></section>
@@ -53,6 +53,26 @@ async function twelveWithRateLimitRetry(ticker,key){
  }
 }
 function table(rows,heads,keys){return `<table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="${r.pass===true?'pass':r.pass===false?'fail':''}">${keys.map(k=>`<td>${r[k]??''}</td>`).join('')}</tr>`).join('')}</tbody></table>`}
+async function loadDemoReference(reason='Live market data is temporarily unavailable.'){
+ const response=await fetch('./portfolio_summary.json');
+ if(!response.ok)throw new Error(`Reference data HTTP ${response.status}`);
+ const demo=await response.json();
+ const survivorsByTicker=Object.fromEntries(demo.screen_survivors.map(item=>[item.ticker,item]));
+ state.dataMode='reference_demo';state.referenceDate=demo.reference_date;state.news=[];state.riskline=null;
+ state.screen=candidates.map(([ticker,group])=>{
+   const survivor=survivorsByTicker[ticker];
+   return {ticker,group,rsi:survivor?'Validated < 70':'—',macd_hist:survivor?'Validated > 0':'—',volatility:'Reference',pass:Boolean(survivor),status:survivor?'REFERENCE PASS':'REFERENCE FAIL'};
+ });
+ state.submittedWeights=demo.screen_survivors.map(item=>({ticker:item.ticker,weight:100*item.submitted_equal_weight}));
+ state.referenceWeights=demo.screen_survivors.map(item=>({ticker:item.ticker,weight:100*item.reference_inverse_volatility_weight})).sort((a,b)=>b.weight-a.weight);
+ document.getElementById('coverage').innerHTML=`<div class="demo-banner"><b>Reference demonstration mode — not current market data.</b><br>${reason} Results reproduce the validated ${demo.reference_date} example.</div>`;
+ document.getElementById('screen').innerHTML='<h3>Reference screen results</h3>'+table(state.screen,['Ticker','Group','RSI rule','MACD rule','Data','Result'],['ticker','group','rsi','macd_hist','volatility','status']);
+ document.getElementById('weights').innerHTML='<h3>Submitted portfolio: equal weight</h3><p class="small">Validated reference example. Equal weight is the official Finance-track submission.</p>'+table(state.submittedWeights.map(x=>({ticker:x.ticker,weight:x.weight.toFixed(1)+'%'})),['Ticker','Submitted weight'],['ticker','weight'])+'<h3>Monitoring reference: inverse volatility</h3><p class="small">Reference-only comparison; it does not replace the submitted equal-weight portfolio.</p>'+table(state.referenceWeights.map(x=>({ticker:x.ticker,weight:x.weight.toFixed(1)+'%'})),['Ticker','Reference weight'],['ticker','weight']);
+ document.getElementById('news').innerHTML='';document.getElementById('macroPanel').innerHTML='';
+ document.getElementById('reviewed').disabled=false;document.getElementById('reviewed').checked=false;document.getElementById('generate').disabled=true;
+ document.getElementById('note').textContent='Not generated. Commentary will be labeled as reference-demo interpretation.';
+ document.getElementById('loadStatus').textContent='Reference demonstration loaded. Enter a Twelve Data key to replace it with a live screen.';
+}
 async function fetchNews(key,survivors){
  if(!key||!survivors.length)return [];
  let q=survivors.join(' OR '), u=`https://newsdata.io/api/1/latest?apikey=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}&language=en`;
@@ -79,6 +99,12 @@ async function runScreen({silentMissingKey=false}={}){
      state.screen.push({ticker:t,group:group[t]||'Custom',rsi:rv.toFixed(2),macd_hist:mh.toFixed(4),volatility:(100*vol).toFixed(2)+'%',vol_raw:vol,pass,status:pass?'PASS':'FAIL'});
    }catch(e){state.screen.push({ticker:t,group:group[t]||'Custom',rsi:'-',macd_hist:'-',volatility:'-',pass:false,status:'ERROR: '+e.message})}
  }
+ if(state.screen.length&&state.screen.every(item=>String(item.status).startsWith('ERROR:'))){
+   await loadDemoReference('All live requests failed or were blocked by the data provider.');
+   screening=false;screenButton.disabled=false;screenButton.textContent='Retry Live Data';
+   return;
+ }
+ state.dataMode='live';state.referenceDate=null;
  state.screen.sort((a,b)=>requested.indexOf(a.ticker)-requested.indexOf(b.ticker));
  const survivors=state.screen.filter(x=>x.pass);
  const equalWeight=survivors.length?100/survivors.length:0;
@@ -104,6 +130,7 @@ async function runScreen({silentMissingKey=false}={}){
  screenButton.textContent='Refresh Live Portfolio';
 }
 document.getElementById('screenBtn').onclick=()=>runScreen();
+document.getElementById('demoBtn').onclick=()=>loadDemoReference('Reference mode selected manually.');
 
 // GitHub Pages is public, so no financial-data credential is embedded in the build.
 // The SPA still initializes on page load and immediately fetches live prices whenever
@@ -119,7 +146,7 @@ tdKeyInput.addEventListener('keydown',event=>{
  if(event.key==='Enter'){event.preventDefault();clearTimeout(autoScreenTimer);runScreen();}
 });
 window.addEventListener('load',()=>{
- document.getElementById('coverage').textContent='Dashboard initialized. Awaiting a runtime Twelve Data key for the automatic live-price screen.';
+ loadDemoReference('Dashboard initialized before a live-data key was supplied.').catch(error=>{document.getElementById('coverage').textContent='Reference demonstration unavailable: '+error.message});
  setTimeout(()=>{if(tdKeyInput.value.trim())runScreen({silentMissingKey:true});},250);
 });
 document.getElementById('reviewed').onchange=e=>document.getElementById('generate').disabled=!e.target.checked;
@@ -133,13 +160,15 @@ async function openRouter(key,system,user){
 document.getElementById('generate').onclick=async()=>{
  const key=val('orKey'); if(!key){alert('Enter OpenRouter API key.');return}
  const surface={
+   data_mode:state.dataMode,
+   reference_date:state.referenceDate,
    methodology:{submitted_portfolio:'equal weight among screen survivors',reference_only:'inverse-volatility comparison'},
    screen:state.screen,
    submitted_equal_weights:state.submittedWeights.map(x=>({ticker:x.ticker,weight_pct:+x.weight.toFixed(4)})),
    reference_inverse_volatility_weights:state.referenceWeights.map(x=>({ticker:x.ticker,weight_pct:+x.weight.toFixed(4)})),
    news:state.news
  };
- const system='You are an investment research assistant. Interpret only the supplied finished calculations. The submitted portfolio is equal weighted among screen survivors. Inverse-volatility weights are reference-only. Never recompute RSI, MACD, volatility, or weights, and never confuse the reference allocation with the submitted portfolio. Be concise, skeptical, and suitable for an investment committee.';
+ const system=`You are an investment research assistant. Interpret only the supplied finished calculations. The submitted portfolio is equal weighted among screen survivors. Inverse-volatility weights are reference-only. Never recompute RSI, MACD, volatility, or weights, and never confuse the reference allocation with the submitted portfolio. Be concise, skeptical, and suitable for an investment committee. If data_mode is reference_demo, explicitly state that the figures are the validated ${state.referenceDate||'reference-date'} demonstration and are not current market data.`;
  try{
    let note=await openRouter(key,system,JSON.stringify(surface));
    let html=`<b>Summary</b><br>${note.summary}<br><br><b>Top conviction</b><br>${note.top_conviction}<br><br><b>Risks</b><ol>${note.risks.map(x=>`<li>${x}</li>`).join('')}</ol>`;
