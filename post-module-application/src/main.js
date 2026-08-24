@@ -7,6 +7,7 @@ const candidates = [
 ];
 let state={screen:[],submittedWeights:[],referenceWeights:[],news:[],riskline:null,dataMode:'none',referenceDate:null};
 let screening=false;
+let screeningRun=0;
 
 document.querySelector('#app').innerHTML = `
 <main><h1>Diversified Quality & Defensive Growth</h1>
@@ -42,18 +43,27 @@ async function twelve(ticker,key){
  return j.values.slice().reverse().map(x=>({date:x.datetime,close:+x.close,open:+x.open,high:+x.high,low:+x.low}));
 }
 const sleep=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
-async function twelveWithRateLimitRetry(ticker,key){
+async function twelveWithRateLimitRetry(ticker,key,runId){
  for(let attempt=0;attempt<3;attempt++){
+   if(runId!==screeningRun)throw Object.assign(new Error('Live screen cancelled'),{cancelled:true});
    try{return await twelve(ticker,key)}
    catch(error){
      if(error.status!==429||attempt===2)throw error;
      document.getElementById('coverage').textContent=`Twelve Data rate limit reached while loading ${ticker}. Waiting for the next credit window...`;
      await sleep(65000);
+     if(runId!==screeningRun)throw Object.assign(new Error('Live screen cancelled'),{cancelled:true});
    }
  }
 }
 function table(rows,heads,keys){return `<table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="${r.pass===true?'pass':r.pass===false?'fail':''}">${keys.map(k=>`<td>${r[k]??''}</td>`).join('')}</tr>`).join('')}</tbody></table>`}
-async function loadDemoReference(reason='Live market data is temporarily unavailable.'){
+async function loadDemoReference(reason='Live market data is temporarily unavailable.',{cancelLive=true}={}){
+ if(cancelLive){
+   screeningRun++;
+   screening=false;
+   const screenButton=document.getElementById('screenBtn');
+   screenButton.disabled=false;
+   screenButton.textContent='Retry Live Data';
+ }
  const response=await fetch('./portfolio_summary.json');
  if(!response.ok)throw new Error(`Reference data HTTP ${response.status}`);
  const demo=await response.json();
@@ -85,6 +95,7 @@ async function runScreen({silentMissingKey=false}={}){
  if(screening)return;
  const key=val('tdKey'); if(!key){if(!silentMissingKey)alert('Enter Twelve Data API key.');return}
  screening=true;
+ const runId=++screeningRun;
  const screenButton=document.getElementById('screenBtn');
  screenButton.disabled=true;
  screenButton.textContent='Loading live data...';
@@ -94,13 +105,14 @@ async function runScreen({silentMissingKey=false}={}){
  document.getElementById('coverage').textContent='Starting controlled live-price screen...'; state.screen=[];
  for(let index=0;index<requested.length;index++){
    const t=requested[index];
+   if(runId!==screeningRun)return;
    document.getElementById('coverage').textContent=`Loading ${t} (${index+1} of ${requested.length})...`;
-   try{let d=await twelveWithRateLimitRetry(t,key), closes=d.map(x=>x.close), rv=rsi(closes,rp), mh=macdHist(closes,mf,ms,msg), vol=annVol(closes), pass=rv<rt&&mh>0;
+   try{let d=await twelveWithRateLimitRetry(t,key,runId), closes=d.map(x=>x.close), rv=rsi(closes,rp), mh=macdHist(closes,mf,ms,msg), vol=annVol(closes), pass=rv<rt&&mh>0;
      state.screen.push({ticker:t,group:group[t]||'Custom',rsi:rv.toFixed(2),macd_hist:mh.toFixed(4),volatility:(100*vol).toFixed(2)+'%',vol_raw:vol,pass,status:pass?'PASS':'FAIL'});
-   }catch(e){state.screen.push({ticker:t,group:group[t]||'Custom',rsi:'-',macd_hist:'-',volatility:'-',pass:false,status:'ERROR: '+e.message})}
+   }catch(e){if(e.cancelled||runId!==screeningRun)return;state.screen.push({ticker:t,group:group[t]||'Custom',rsi:'-',macd_hist:'-',volatility:'-',pass:false,status:'ERROR: '+e.message})}
  }
  if(state.screen.length&&state.screen.every(item=>String(item.status).startsWith('ERROR:'))){
-   await loadDemoReference('All live requests failed or were blocked by the data provider.');
+   await loadDemoReference('All live requests failed or were blocked by the data provider.',{cancelLive:false});
    screening=false;screenButton.disabled=false;screenButton.textContent='Retry Live Data';
    return;
  }
@@ -130,7 +142,11 @@ async function runScreen({silentMissingKey=false}={}){
  screenButton.textContent='Refresh Live Portfolio';
 }
 document.getElementById('screenBtn').onclick=()=>runScreen();
-document.getElementById('demoBtn').onclick=()=>loadDemoReference('Reference mode selected manually.');
+document.getElementById('demoBtn').onclick=async()=>{
+ document.getElementById('loadStatus').textContent='Switching to the reference demonstration...';
+ try{await loadDemoReference('Reference mode selected manually.')}
+ catch(error){document.getElementById('coverage').textContent='Reference demonstration unavailable: '+error.message}
+};
 
 // GitHub Pages is public, so no financial-data credential is embedded in the build.
 // The SPA still initializes on page load and immediately fetches live prices whenever
